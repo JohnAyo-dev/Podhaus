@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PodHaus | Grade A iPods</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poiret+One&family=Jost:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="favicon.jpg">
+</head>
+<body>
+<header><div class="w">
+  <a class="logo" href="#top">PodHaus</a>
+  <nav><a href="#g6">6th Gen</a><a href="#g7">7th Gen</a><button class="cartbtn" id="cartBtn" aria-haspopup="dialog">Cart (<span id="count">0</span>)</button></nav>
+</div></header>
+
+<main class="w" id="top">
+  <div class="hero">
+    <h1>Grade A iPods, priced simply.</h1>
+    <p>Refurbished 6th and 7th generation iPods in four colours, ready for delivery. Pick your model and order in minutes.</p>
+    <div class="cta"><a class="btn" href="#g6">Shop 6th Gen</a><a class="btn ghost" href="#g7">Shop 7th Gen</a></div>
+  </div>
+
+  <div class="trust">
+    <div><b>Grade A condition</b><span>Every unit inspected</span></div>
+    <div><b>Free pouch</b><span>Included with each iPod</span></div>
+    <div><b>Free screen guard</b><span>Already in the box</span></div>
+    <div><b>Apple-compatible cord</b><span>Ready to charge</span></div>
+  </div>
+
+  <section class="gen" id="g6" data-gen="6"></section>
+  <section class="gen" id="g7" data-gen="7"></section>
+</main>
+
+<footer><div class="w">
+  <span>&copy; iPod Store. All iPods are Grade A.</span>
+  <span>Orders and questions: <a id="snapLink" href="#" target="_blank" rel="noopener">Snapchat</a></span>
+</div></footer>
+
+<div id="drawer" role="dialog" aria-modal="true" aria-label="Your cart">
+  <div id="panel">
+    <div class="top"><h2>Your cart</h2><button class="x" id="closeBtn">Close</button></div>
+    <div id="items"></div>
+    <div class="total"><span>Total</span><span id="total">N0</span></div>
+    <input id="name" placeholder="Name" autocomplete="name">
+    <input id="addr" placeholder="Hall|Wing|Room No." autocomplete="street-address">
+    <button class="btn order-btn" id="order">Order on Snapchat</button>
+    <p class="note">We copy your order so you can paste it into a Snapchat chat with us.</p>
+  </div>
+</div>
+
+<script src="app.js" defer></script>
+</body>
+</html>

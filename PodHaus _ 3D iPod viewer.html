@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<link rel="icon" href="favicon.jpg">
+
+
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PodHaus | 3D iPod viewer</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poiret+One&family=Jost:wght@400;500;600&display=swap">
+<style>
+:root{--gold:#e9b43c;--line:#2a2210;--text:#f4ead2;--mute:#a79a7c;box-sizing:border-box;color-scheme:dark;
+padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+*,*::before,*::after{box-sizing:inherit}
+html,body{height:100%;margin:0}
+body{background:#050403;color:var(--text);font:400 1rem/1.5 'Jost','Helvetica Neue',Arial,sans-serif;display:flex;flex-direction:column}
+header{display:flex;justify-content:space-between;align-items:center;padding:12px 20px;border-bottom:1px solid var(--line)}
+.logo{font-family:'Poiret One','Century Gothic',sans-serif;font-size:1.6rem;color:var(--gold);text-decoration:none}
+header a.shop{color:var(--text);font-size:.95rem}
+#stage{position:relative;flex:1;min-height:0;background:radial-gradient(ellipse at 50% 40%,#1c150a 0,#050403 72%)}
+canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;cursor:grab}
+canvas:active{cursor:grabbing}
+#label{position:absolute;left:20px;top:16px;pointer-events:none}
+#label b{display:block;font-family:'Poiret One',sans-serif;font-weight:400;font-size:2rem;color:var(--gold);line-height:1.1}
+#label span{color:var(--mute);font-size:.92rem}
+#hint{position:absolute;right:20px;top:20px;color:var(--mute);font-size:.85rem;pointer-events:none}
+.bar{display:flex;flex-wrap:wrap;gap:12px 24px;justify-content:center;align-items:center;padding:14px 16px;border-top:1px solid var(--line)}
+.group{display:flex;gap:8px;align-items:center}
+button{font:500 .95rem 'Jost',sans-serif;color:var(--text);background:none;border:1px solid var(--line);border-radius:4px;min-height:44px;padding:0 14px;cursor:pointer}
+button:hover{border-color:var(--gold)}button[aria-pressed=true]{border-color:var(--gold);color:var(--gold)}
+.sw{width:44px;padding:0;display:grid;place-items:center}.sw i{width:22px;height:22px;border-radius:50%;background:var(--c);border:1px solid rgba(0,0,0,.6)}
+:focus-visible{outline:2px solid #fff;outline-offset:2px}
+@media (max-width:560px){#hint{display:none}}
+</style>
+</head>
+<body>
+  <header>
+    <a class="logo" href="index.html">PodHaus</a>
+    <nav>
+      <a class="shop" href="index.html">3D Model</a>
+      <a class="shop" href="https://podhaus.netlify.app/">Shop iPods</a>
+    </nav>
+  </header>
+<div id="stage">
+  <canvas id="c" aria-label="Interactive 3D iPod. Drag to rotate, scroll to zoom."></canvas>
+  <div id="label"><b id="cname">Pink</b><span id="csub"></span></div>
+  <div id="hint">Drag to rotate · Scroll to zoom</div>
+</div>
+<div class="bar">
+  <div class="group" role="group" aria-label="Generation"><button data-gen="6">6th Gen</button><button data-gen="7">7th Gen</button></div>
+  <div class="group" id="colours" role="group" aria-label="Colour"></div>
+  <div class="group" role="group" aria-label="View">
+    <button data-view="front">Front</button><button data-view="side">Side</button><button data-view="back">Back</button>
+  </div>
+  <button id="cmp" aria-pressed="false">Compare all colours</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// Colours (body metal tint). Names match the PodHaus shop.
+const COLS = [["Pink","#e5337e"],["Blue","#2e86e0"],["Beige","#d8c49b"],["Space Grey","#4b4b4f"]];
+// iPod touch is about 58.6 x 123.4 x 6.1 mm; 1 unit = 20 mm.
+const W = 2.93, H = 6.17, D = 0.31, R = 0.45, BS = 0.05;
+const $ = s => document.querySelector(s);
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+const stage = $("#stage"), canvas = $("#c");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 100);
+
+// Procedural studio lighting: a few bright panels baked into an environment map, so the metal has reflections.
+const pm = new THREE.PMREMGenerator(renderer), env = new THREE.Scene();
+env.background = new THREE.Color(0x120e07);
+[[0,7,0,10,.2,10,1.8],[-8,1,3,.2,7,7,3],[8,2,-3,.2,6,7,2.5],[0,-2,8,10,3,.2,0.45]].forEach(([x,y,z,w,h,d,i]) => {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), new THREE.MeshBasicMaterial({ color: new THREE.Color().setScalar(i) }));
+  m.position.set(x,y,z); env.add(m);
+});
+scene.environment = pm.fromScene(env, 0.04).texture;
+const key = new THREE.DirectionalLight(0xffffff, 0.6); key.position.set(3,5,8); scene.add(key);
+
+// Rounded-rectangle outline used for the body and glass.
+function rr(w, h, r) {
+  const s = new THREE.Shape(), x = -w/2, y = -h/2, P = Math.PI;
+  s.moveTo(x+r, y); s.lineTo(x+w-r, y); s.absarc(x+w-r, y+r, r, -P/2, 0);
+  s.lineTo(x+w, y+h-r); s.absarc(x+w-r, y+h-r, r, 0, P/2);
+  s.lineTo(x+r, y+h); s.absarc(x+r, y+h-r, r, P/2, P);
+  s.lineTo(x, y+r); s.absarc(x+r, y+r, r, P, 1.5*P);
+  return s;
+}
+
+// Home screens drawn on a canvas, laid out like the reference photo. 6th gen = iOS 12.5.7, 7th gen = iOS 15 (wallpaper follows the iPod colour).
+// Icons are simple stylised drawings, not Apple's artwork.
+const SZ = 92;
+function drawIcon(g, name, x, y) {
+  const S = SZ, cx = x + S/2, cy = y + S/2, W = "#fff";
+  const box = (a,b,w,h,r) => { g.beginPath(); g.roundRect ? g.roundRect(a,b,w,h,r) : g.rect(a,b,w,h); };
+  const dot = (a,b,r,c) => { g.fillStyle = c; g.beginPath(); g.arc(a,b,r,0,7); g.fill(); };
+  const poly = (pts,c) => { g.fillStyle = c; g.beginPath(); pts.forEach(([a,b],i) => i ? g.lineTo(a,b) : g.moveTo(a,b)); g.closePath(); g.fill(); };
+  const line = (pts,c,w) => { g.strokeStyle = c; g.lineWidth = w; g.lineCap = "round"; g.beginPath(); pts.forEach(([a,b],i) => i ? g.lineTo(a,b) : g.moveTo(a,b)); g.stroke(); };
+  const txt = (t,a,b,sz,c,wt) => { g.fillStyle = c; g.font = (wt||"700") + " " + sz + "px Arial"; g.textAlign = "center"; g.fillText(t,a,b); };
+  const tile = (c1,c2) => { const gr = g.createLinearGradient(x,y,x,y+S); gr.addColorStop(0,c1); gr.addColorStop(1,c2||c1); g.fillStyle = gr; box(x,y,S,S,21); g.fill(); };
+  switch (name) {
+    case "FaceTime": tile("#5fe07a","#1fb23d"); g.fillStyle = W; box(x+14,y+30,42,32,8); g.fill(); poly([[x+60,y+42],[x+78,y+32],[x+78,y+60],[x+60,y+50]],W); break;
+    case "Calendar": tile(W); txt("Sun",cx,y+25,17,"#ff3b30","600"); txt("4",cx,y+72,46,"#111","500"); break;
+    case "Photos": tile(W); ["#ff3b30","#ff9500","#ffcc00","#34c759","#30b0ff","#af52de"].forEach((c,i) => { g.globalAlpha = .8; dot(cx+Math.cos(i*Math.PI/3)*14, cy+Math.sin(i*Math.PI/3)*14, 14, c); }); g.globalAlpha = 1; break;
+    case "Camera": tile("#c8c8cc","#8e8e93"); g.fillStyle = "#222"; box(x+12,y+28,68,44,9); g.fill(); dot(cx,cy+3,15,"#ddd"); dot(cx,cy+3,9,"#222"); break;
+    case "Contacts": tile("#e7e2d8","#bdb7aa"); dot(cx,cy-8,14,"#8a857b"); g.fillStyle = "#8a857b"; g.beginPath(); g.arc(cx,y+82,28,Math.PI,0); g.fill(); break;
+    case "Clock": tile("#111"); dot(cx,cy,35,W); line([[cx,cy],[cx,cy-23]],"#111",4); line([[cx,cy],[cx+16,cy+6]],"#111",4); dot(cx,cy,3,"#ff9500"); break;
+    case "Maps": tile("#e9f3d6","#cfe5b2"); line([[x+8,y+82],[x+84,y+12]],W,14); line([[x+14,y+72],[x+78,y+22]],"#4a90e2",5); dot(x+70,y+28,7,"#ff3b30"); break;
+    case "Weather": tile("#3b9cf0","#1a6fd0"); dot(x+30,y+32,14,"#ffd60a"); dot(cx-8,cy+14,14,W); dot(cx+10,cy+9,18,W); dot(cx+24,cy+18,11,W); g.fillStyle = W; g.fillRect(cx-8,cy+14,32,15); break;
+    case "Notes": tile(W); g.save(); box(x,y,S,S,21); g.clip(); g.fillStyle = "#ffd60a"; g.fillRect(x,y,S,24); g.restore(); [46,60,74].forEach(o => { g.fillStyle = "#d1d1d6"; g.fillRect(x+14,y+o,64,3); }); break;
+    case "Reminders": tile(W); [["#ff3b30",26],["#ff9500",46],["#0a84ff",66]].forEach(([c,o]) => { dot(x+22,y+o,6,c); g.fillStyle = "#d1d1d6"; g.fillRect(x+36,y+o-1,42,3); }); break;
+    case "Stocks": tile("#111"); line([[x+10,y+68],[x+30,y+44],[x+46,y+58],[x+66,y+28],[x+82,y+38]],"#34c759",4); break;
+    case "News": tile(W); txt("N",cx,cy+18,54,"#ff2d55"); break;
+    case "TV": tile("#111"); txt("tv",cx,cy+14,40,W); break;
+    case "Videos": tile("#2c2c2e"); poly([[cx-12,cy-18],[cx+20,cy],[cx-12,cy+18]],W); break;
+    case "iTunes Store": tile("#fb5bc5","#a23ff0"); { const p = []; for (let i = 0; i < 10; i++) { const r = i%2 ? 12 : 30, a = -Math.PI/2 + i*Math.PI/5; p.push([cx+Math.cos(a)*r, cy+Math.sin(a)*r]); } poly(p,W); } break;
+    case "App Store": tile("#3ec0ff","#1566f0"); txt("A",cx,cy+20,60,W); break;
+    case "Books": tile("#ffa733","#ff7a00"); g.fillStyle = W; box(x+14,y+28,30,38,3); g.fill(); box(x+48,y+28,30,38,3); g.fill(); break;
+    case "Health": tile(W); dot(cx-10,cy-6,12,"#ff2d55"); dot(cx+10,cy-6,12,"#ff2d55"); poly([[cx-21,cy-1],[cx+21,cy-1],[cx,cy+26]],"#ff2d55"); break;
+    case "Home": tile(W); poly([[cx,y+16],[x+76,cy],[x+68,cy],[x+68,y+74],[x+24,y+74],[x+24,cy],[x+16,cy]],"#ff9f0a"); break;
+    case "Wallet": tile("#111"); ["#ff453a","#ff9f0a","#30d158","#0a84ff"].forEach((c,i) => { g.fillStyle = c; box(x+14,y+22+i*10,64,10,4); g.fill(); }); break;
+    case "Settings": tile("#c7c7cc","#8e8e93"); g.strokeStyle = "#4a4a4f"; g.lineWidth = 9; g.setLineDash([6,5]); g.beginPath(); g.arc(cx,cy,27,0,7); g.stroke(); g.setLineDash([]); dot(cx,cy,19,"#5a5a5f"); dot(cx,cy,8,"#c7c7cc"); break;
+    case "Messages": tile("#5fe07a","#1fb23d"); g.fillStyle = W; g.beginPath(); g.ellipse(cx,cy-3,33,26,0,0,7); g.fill(); poly([[cx-18,cy+16],[cx-32,cy+34],[cx-2,cy+22]],W); break;
+    case "Safari": tile(W); dot(cx,cy,34,"#1e90ff"); poly([[cx+24,cy-24],[cx+4,cy+4],[cx-4,cy-4]],"#ff3b30"); poly([[cx-24,cy+24],[cx+4,cy+4],[cx-4,cy-4]],W); break;
+    case "Mail": tile("#4db7ff","#1566f0"); g.fillStyle = W; box(x+14,y+26,64,42,6); g.fill(); line([[x+18,y+32],[cx,cy+8],[x+74,y+32]],"#1e7fe0",3); break;
+    case "Music": tile(W); g.fillStyle = "#fc3c44"; g.beginPath(); g.ellipse(cx-8,cy+18,12,8,-.3,0,7); g.fill(); g.fillRect(cx+2,cy-26,5,44); g.fillRect(cx+2,cy-26,24,12); break;
+  }
+}
+function homeScreen(gen, ci) {
+  const c = document.createElement("canvas"); c.width = 576; c.height = 1024; const g = c.getContext("2d");
+  const box = (a,b,w,h,r) => { g.beginPath(); g.roundRect ? g.roundRect(a,b,w,h,r) : g.rect(a,b,w,h); };
+  if (gen === 7) { g.fillStyle = COLS[ci][1]; g.fillRect(0,0,576,1024); g.fillStyle = "rgba(255,255,255,.22)";
+    for (let y = 4, r = 0; y < 1024; y += 14, r++) for (let x = (r%2)*7 + 4; x < 576; x += 14) { g.beginPath(); g.arc(x,y,2.2,0,7); g.fill(); } }
+  else { const bg = g.createLinearGradient(0,0,576,1024); bg.addColorStop(0,"#2b4fa8"); bg.addColorStop(1,"#8a3fa8"); g.fillStyle = bg; g.fillRect(0,0,576,1024); }
+  // status bar: iPod + wifi, time, battery
+  g.fillStyle = "#fff"; g.textAlign = "left"; g.font = "500 22px Arial"; g.fillText("iPod",16,36);
+  g.strokeStyle = "#fff"; g.lineWidth = 3; [6,12,18].forEach(r => { g.beginPath(); g.arc(98,40,r,-2.4,-.74); g.stroke(); });
+  g.textAlign = "center"; g.font = "700 24px Arial"; g.fillText("9:41 AM",288,36);
+  box(500,18,44,20,5); g.fill(); g.fillRect(546,24,4,8);
+  const gap = (576 - 4*SZ) / 5, X = i => gap + i*(SZ+gap);
+  const apps = ["FaceTime","Calendar","Photos","Camera","Contacts","Clock","Maps","Weather","Notes","Reminders","Stocks","News", gen === 7 ? "TV" : "Videos","iTunes Store","App Store","Books","Health","Home","Wallet","Settings"];
+  apps.forEach((n,i) => { const x = X(i%4), y = 70 + Math.floor(i/4)*146; drawIcon(g,n,x,y);
+    g.fillStyle = "rgba(255,255,255,.92)"; g.font = "500 16px Arial"; g.textAlign = "center"; g.fillText(n,x+SZ/2,y+SZ+22); });
+  g.fillStyle = "rgba(255,255,255,.35)"; [262,288].forEach(x => { g.beginPath(); g.arc(x,858,5,0,7); g.fill(); }); g.fillStyle = "#fff"; g.beginPath(); g.arc(314,858,5,0,7); g.fill();
+  g.fillStyle = "rgba(255,255,255,.32)"; box(14,884,548,126,34); g.fill();
+  ["Messages","Safari","Mail","Music"].forEach((n,i) => drawIcon(g,n,X(i),902));
+  const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; t.anisotropy = 4; return t;
+}
+let gen = 7;
+const s6 = homeScreen(6, 0);
+const SCREENS = { 6: [s6,s6,s6,s6], 7: COLS.map((_, i) => homeScreen(7, i)) };
+
+// Back marking: a simple apple silhouette and the "iPod" wordmark, engraved in a tone matching the finish.
+function backMark(light) {
+  const c = document.createElement("canvas"); c.width = 512; c.height = 512; const g = c.getContext("2d"), cx = 256, cy = 190, s = 190;
+  g.fillStyle = light ? "#fff" : "#000";   // solid ink; the plane's opacity sets how strong the engraving looks
+  g.beginPath(); g.arc(cx-.2*s, cy, .3*s, 0, 7); g.arc(cx+.2*s, cy, .3*s, 0, 7); g.arc(cx-.13*s, cy+.2*s, .2*s, 0, 7); g.arc(cx+.13*s, cy+.2*s, .2*s, 0, 7); g.fill();
+  g.fillRect(cx-.2*s, cy-.3*s, .4*s, .55*s);
+  g.beginPath(); g.ellipse(cx+.06*s, cy-.42*s, .16*s, .07*s, -.7, 0, 7); g.fill();
+  g.globalCompositeOperation = "destination-out"; g.beginPath(); g.arc(cx+.46*s, cy-.04*s, .14*s, 0, 7); g.fill();
+  g.globalCompositeOperation = "source-over"; g.font = "500 100px Arial"; g.textAlign = "center"; g.fillText("iPod", cx, 390);
+  const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; t.anisotropy = 4; return t;
+}
+
+function makePod(hex, idx) {
+  const outer = new THREE.Group(), spin = new THREE.Group(); outer.add(spin); outer.userData.spin = spin;
+  const white = idx !== 3;                                   // Space Grey has a black front; the others are white
+  const metal = new THREE.MeshStandardMaterial({ color: new THREE.Color(hex).convertSRGBToLinear(), metalness: 0.6, roughness: 0.45, envMapIntensity: 0.9 });
+  const body = new THREE.Mesh(new THREE.ExtrudeGeometry(rr(W-2*BS, H-2*BS, R-BS),
+    { depth: D-2*BS, bevelEnabled: true, bevelThickness: BS, bevelSize: BS, bevelSegments: 5, curveSegments: 32 }), metal);
+  body.geometry.translate(0, 0, -(D-2*BS)/2); spin.add(body);
+  const glass = new THREE.Mesh(new THREE.ExtrudeGeometry(rr(W-0.14, H-0.14, R-0.07), { depth: 0.01, bevelEnabled: false, curveSegments: 32 }),
+    new THREE.MeshPhysicalMaterial(white ? { color: 0xffffff, roughness: 0.35, clearcoat: 0.3, clearcoatRoughness: 0.3, envMapIntensity: 0.7 }
+                                         : { color: 0x020202, roughness: 0.25, clearcoat: 0.3, clearcoatRoughness: 0.2, envMapIntensity: 0.12 }));
+  glass.position.z = D/2; spin.add(glass);
+  const front = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, D/2 + z); spin.add(m); return m; };
+  front(new THREE.PlaneGeometry(2.64, 4.68), new THREE.MeshBasicMaterial({ color: 0x000000 }), 0, 0.08, 0.0125);      // black display edge
+  outer.userData.scr = front(new THREE.PlaneGeometry(2.6, 4.62), new THREE.MeshBasicMaterial({ map: SCREENS[gen][idx], toneMapped: false }), 0, 0.08, 0.0135);
+  const ink = white ? 0xc9c9ce : 0x4a4a50, face = white ? 0xf0f0f3 : 0x0a0a0a;
+  front(new THREE.CircleGeometry(0.05, 20), new THREE.MeshBasicMaterial({ color: 0x1a1a22 }), 0, 2.82, 0.014);        // front camera
+  front(new THREE.RingGeometry(0.2, 0.245, 48), new THREE.MeshBasicMaterial({ color: ink }), 0, -2.66, 0.014);        // home button ring
+  front(new THREE.PlaneGeometry(0.15, 0.15), new THREE.MeshBasicMaterial({ color: ink }), 0, -2.66, 0.0142);          // home button square
+  front(new THREE.PlaneGeometry(0.115, 0.115), new THREE.MeshBasicMaterial({ color: face }), 0, -2.66, 0.0144);
+  // Back: lens (top-left) and flash, black pill (top-right), logo and wordmark. Coordinates are as seen from the back.
+  const back = new THREE.Group(); back.position.z = -D/2 - 0.004; back.rotation.y = Math.PI; spin.add(back);
+  const onBack = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); back.add(m); };
+  const top = H/2 - 0.55, ring = new THREE.MeshStandardMaterial({ color: white ? 0xb9b9be : 0x202024, metalness: 0.8, roughness: 0.3 });
+  onBack(new THREE.RingGeometry(0.1, 0.17, 40), ring, -W/2 + 0.5, top, 0.002);
+  onBack(new THREE.CircleGeometry(0.1, 40), new THREE.MeshStandardMaterial({ color: 0x080b14, metalness: 0.2, roughness: 0.05 }), -W/2 + 0.5, top, 0.003);
+  onBack(new THREE.CircleGeometry(0.04, 20), new THREE.MeshStandardMaterial({ color: 0x2b2b30, roughness: 0.2 }), -W/2 + 0.98, top, 0.002);
+  onBack(new THREE.ShapeGeometry(rr(1.05, 0.3, 0.15), 24), new THREE.MeshStandardMaterial({ color: 0x050505, metalness: 0, roughness: 0.5, envMapIntensity: 0.15 }), 0.5, top, 0.002);
+  onBack(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial({ map: backMark(!white), transparent: true, opacity: white ? 0.38 : 0.3, depthWrite: false }), 0, 0.2, 0.003);
+  // Edge buttons
+  [[0.6,0.05,0.1, W/2-0.8,H/2,0],[0.04,0.38,0.1, -W/2,1.2,0],[0.04,0.38,0.1, -W/2,0.65,0]].forEach(([w,h,d,x,y,z]) => {
+    const b = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), metal); b.position.set(x,y,z); spin.add(b);
+  });
+  return outer;
+}
+
+const pods = COLS.map(([, hex], i) => { const o = makePod(hex, i); o.userData.i = i; o.userData.tp = new THREE.Vector3(); o.userData.ts = 0; scene.add(o); return o; });
+let cur = 0, compare = false, zoom = 1, camZ = 18, rotX = 0, rotY = 0.5, tX = 0, tY = 0.5, idle = 0, drag = null;
+
+// Place pods: one centred, or all four in a row (wide screens) / a 2x2 grid (tall screens). Returns half extents to fit.
+function layout() {
+  const asp = stage.clientWidth / stage.clientHeight; let ex = 1.8, ey = 3.4;
+  pods.forEach((p, i) => {
+    const u = p.userData;
+    if (!compare) { u.tp.set(0,0,0); u.ts = i === cur ? 1 : 0; }
+    else if (asp > 1.5) { u.tp.set((i-1.5)*3.7, 0, 0); u.ts = 1; ex = 7.4; }
+    else { u.tp.set((i%2-0.5)*3.9, (0.5-Math.floor(i/2))*6.9, 0); u.ts = 1; ex = 3.9; ey = 7; }
+  });
+  const t = Math.tan(THREE.MathUtils.degToRad(camera.fov/2));
+  return Math.max(ey / t, ex / (t * asp)) * 1.12;
+}
+let fitZ = 18;
+function resize() {
+  const w = stage.clientWidth, h = stage.clientHeight; renderer.setSize(w, h, false);
+  camera.aspect = w / h; camera.updateProjectionMatrix(); fitZ = layout();
+}
+new ResizeObserver(resize).observe(stage);
+
+// UI
+$("#colours").innerHTML = COLS.map(([n,h], i) => `<button class="sw" style="--c:${h}" data-i="${i}" aria-label="${n}" title="${n}"><i></i></button>`).join("");
+function refreshUI() {
+  document.querySelectorAll("#colours button").forEach(b => b.setAttribute("aria-pressed", String(!compare && +b.dataset.i === cur)));
+  document.querySelectorAll("[data-gen]").forEach(b => b.setAttribute("aria-pressed", String(+b.dataset.gen === gen)));
+  $("#csub").textContent = gen === 6 ? "iPod touch 6th gen · iOS 12.5.7" : "iPod touch 7th gen · iOS 15";
+  $("#cname").textContent = compare ? "All colours" : COLS[cur][0];
+  $("#cmp").setAttribute("aria-pressed", String(compare)); $("#cmp").textContent = compare ? "Show one" : "Compare all colours";
+}
+document.addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.gen) { gen = +b.dataset.gen; pods.forEach(p => { const m = p.userData.scr.material; m.map = SCREENS[gen][p.userData.i]; m.needsUpdate = true; }); }
+  else if (b.dataset.i) { cur = +b.dataset.i; compare = false; }
+  else if (b.id === "cmp") compare = !compare;
+  else if (b.dataset.view) { const turn = Math.PI*2, base = Math.round(tY/turn)*turn; tY = base + { front: 0, side: Math.PI/2, back: Math.PI }[b.dataset.view]; tX = 0; idle = -4; return; }
+  fitZ = layout(); refreshUI();
+});
+
+// Drag to rotate, wheel to zoom
+canvas.addEventListener("pointerdown", e => { drag = { x: e.clientX, y: e.clientY }; canvas.setPointerCapture(e.pointerId); idle = 0; });
+canvas.addEventListener("pointermove", e => { if (!drag) return;
+  tY += (e.clientX - drag.x) * 0.01; tX = Math.max(-0.7, Math.min(0.7, tX + (e.clientY - drag.y) * 0.006)); drag = { x: e.clientX, y: e.clientY }; idle = 0; });
+["pointerup","pointercancel"].forEach(t => canvas.addEventListener(t, () => { drag = null; }));
+canvas.addEventListener("wheel", e => { e.preventDefault(); zoom = Math.max(0.6, Math.min(1.5, zoom * Math.exp(e.deltaY * 0.001))); }, { passive: false });
+
+// Render loop: smooth rotation, slow auto-spin when idle, smooth layout changes
+const clock = new THREE.Clock();
+(function loop() {
+  requestAnimationFrame(loop);
+  const dt = Math.min(clock.getDelta(), 0.05), k = Math.min(1, dt * 8);
+  idle += dt; if (!drag && !reduce && idle > 2.5) tY += dt * 0.5;
+  rotX += (tX - rotX) * k; rotY += (tY - rotY) * k;
+  camZ += (fitZ * zoom - camZ) * k; camera.position.set(0, 0, camZ); camera.lookAt(0,0,0);
+  pods.forEach(p => { const u = p.userData, s = p.scale.x + (u.ts - p.scale.x) * k;
+    p.scale.setScalar(Math.max(s, 0.001)); p.visible = s > 0.02; p.position.lerp(u.tp, k);
+    u.spin.rotation.set(rotX, rotY, 0); });
+  renderer.render(scene, camera);
+})();
+resize(); refreshUI();
+</script>
+</body>
+</html>
